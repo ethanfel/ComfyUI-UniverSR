@@ -136,8 +136,10 @@ def _load_video_audio(video_path: str, start_time: float, duration: float) -> di
 
     temp_name = _temp_preview_symlink(video_path)
     ext = (os.path.splitext(video_path)[1] or ".mp4").lstrip(".")
-    return {"ui": {"gifs": [{"filename": temp_name, "subfolder": "", "type": "temp",
-                             "format": f"video/{ext}"}]},
+    # Custom key (not "gifs") so ComfyUI core doesn't ALSO render it — our web
+    # extension is the only thing that previews it, avoiding a double preview.
+    return {"ui": {"universr_videos": [{"filename": temp_name, "subfolder": "", "type": "temp",
+                                        "format": f"video/{ext}"}]},
             "result": (info, audio)}
 
 
@@ -318,8 +320,8 @@ class UniverSRVideoCombiner:
             subfolder = os.path.relpath(full_folder, out_dir)
             if subfolder == ".":
                 subfolder = ""
-            ui = {"gifs": [{"filename": out_name, "subfolder": subfolder, "type": out_type,
-                            "format": f"video/{src_ext.lstrip('.')}"}]}
+            ui = {"universr_videos": [{"filename": out_name, "subfolder": subfolder, "type": out_type,
+                                       "format": f"video/{src_ext.lstrip('.')}"}]}
         return {"ui": ui, "result": (str(out_path),)}
 
 

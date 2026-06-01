@@ -63,8 +63,9 @@ function addVideoPreview(nodeType) {
         const onExecuted = node.onExecuted;
         node.onExecuted = function (output) {
             onExecuted?.apply(this, arguments);
-            if (output?.gifs?.[0]) {
-                const g = output.gifs[0];
+            // custom key (see nodes_video.py) — core ignores it, so we render it once
+            const g = output?.universr_videos?.[0];
+            if (g) {
                 const params = new URLSearchParams({
                     filename: g.filename,
                     type: g.type || "temp",
