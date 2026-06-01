@@ -6,3 +6,6 @@ einops>=0.7
 timm>=0.9
 huggingface_hub>=0.20
 pyyaml>=6.0
+# Video loader/combiner nodes only — read/write WAV for ffmpeg muxing.
+# (ffmpeg itself must be installed separately and on PATH.)
+soundfile>=0.12

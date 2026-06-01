@@ -27,6 +27,8 @@ muffled or band‑limited audio gets believable "air" and detail back.
 - [Nodes](#nodes)
   - [UniverSR Model Loader](#universr-model-loader)
   - [UniverSR Super-Resolution](#universr-super-resolution)
+  - [UniverSR Load Video Audio](#universr-load-video-audio)
+  - [UniverSR Video Combiner](#universr-video-combiner)
 - [Choosing `input_sr`](#choosing-input_sr-the-one-setting-that-matters-most)
 - [Recommended settings](#recommended-settings)
 - [Long audio & chunking](#long-audio--chunking)
@@ -47,6 +49,8 @@ muffled or band‑limited audio gets believable "air" and detail back.
 - 🎛️ **Wet/dry blend** — full SR, or dial it back to gently brighten already-48 kHz audio (BWE).
 - 🎲 **Seed control** with **global-RNG isolation** (won't perturb other nodes' randomness).
 - 📊 Optional **before/after spectrogram** image output.
+- 🎬 **Video in / out** — extract a video's audio, super-resolve it, and remux it back onto the
+  original video (no video re-encode), all with `ffmpeg`.
 - 📦 **Self-contained** — the UniverSR inference code is vendored; the only extra dependency beyond
   ComfyUI's stack is `torchdiffeq`.
 
@@ -73,6 +77,10 @@ torchdiffeq   einops   timm   huggingface_hub   pyyaml
 that typically needs installing.) The `universr` package itself is **vendored** under `vendor/` — if a
 `pip`-installed copy is found it is preferred, otherwise the bundled one is used, so no `git+` install
 is required.
+
+The **video** nodes additionally need **`ffmpeg`** on your `PATH` (`apt install ffmpeg` /
+`brew install ffmpeg` / `conda install -c conda-forge ffmpeg`) and `soundfile` (in `requirements.txt`).
+The audio SR nodes work without either.
 
 > **GPU recommended.** Inference runs on CUDA if available and falls back to CPU (much slower).
 
@@ -141,6 +149,46 @@ Runs the super-resolution. Outputs: **`AUDIO`** (48 kHz) and **`IMAGE`** (spectr
 | `blend` | float | `1.0` | 0–1 | Wet/dry mix. `1.0` = full SR; lower keeps more of the original. |
 | `unload_model` | bool | `false` | — | Free the model from VRAM after this run. |
 | `show_spectrogram` | bool | `true` | — | Also output a before/after spectrogram comparison image. |
+
+### UniverSR Load Video Audio
+
+Extracts a video's audio track (native rate/channels, via `ffmpeg`) and keeps a reference to the
+source video for remuxing. Outputs **`AUDIO`** and **`UNIVERSR_VIDEO`**, and previews the video inline.
+
+| Input | Type | Default | Description |
+|---|---|---|---|
+| `video_path` | string | `""` | Absolute path to a video. Takes priority over `video`. |
+| `video` *(opt.)* | choice | — | Pick a file from ComfyUI's `input/` folder (used when `video_path` is empty). |
+| `start_time` *(opt.)* | float | `0.0` | Trim start, seconds. |
+| `duration` *(opt.)* | float | `0.0` | Trim length, seconds (`0` = to end). |
+
+### UniverSR Video Combiner
+
+Muxes an `AUDIO` track onto the source video **without re-encoding the video** (`-c:v copy`) and saves
+the result. If the loader trimmed the clip, the same trim is applied to the video so A/V stay aligned.
+
+| Input | Type | Default | Description |
+|---|---|---|---|
+| `video` | UNIVERSR_VIDEO | — | From **UniverSR Load Video Audio**. |
+| `audio` | AUDIO | — | The enhanced 48 kHz audio. |
+| `filename_prefix` | string | `UniverSR` | Output name prefix (auto-incremented). |
+| `audio_codec` *(opt.)* | choice | `aac` | `aac` / `flac` / `pcm_s16le` / `libopus` / `libmp3lame`. |
+| `save_output` *(opt.)* | bool | `true` | Save to `output/` (else `temp/`). |
+
+Output: `output_path` (string) and an inline video preview.
+
+#### Video workflow
+
+```
+UniverSR Load Video Audio ──┬─ audio ─► UniverSR Super-Resolution ─ audio ─┐
+                            │                                              ▼
+                            └────────────── video ──────────────► UniverSR Video Combiner ─► .mp4
+                                              UniverSR Model Loader ─► (Super-Resolution)
+```
+
+Load the video → super-resolve its audio (set `input_sr` to the content bandwidth) → feed the enhanced
+audio **and** the `video` reference into the combiner. Ready-made graph:
+[`example_workflows/universr_video.json`](example_workflows/universr_video.json).
 
 ---
 
