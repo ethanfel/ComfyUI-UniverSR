@@ -152,13 +152,13 @@ Runs the super-resolution. Outputs: **`AUDIO`** (48 kHz) and **`IMAGE`** (spectr
 
 ### UniverSR Load Video Audio
 
-Extracts a video's audio track (native rate/channels, via `ffmpeg`) and keeps a reference to the
-source video for remuxing. Outputs **`AUDIO`** and **`UNIVERSR_VIDEO`**, and previews the video inline.
+Upload or pick a video, extract its audio track (native rate/channels, via `ffmpeg`), and keep a
+reference to the source video for remuxing. The clip **previews inline in the node** — with an upload
+button and drag-and-drop, just like a normal video loader. Outputs **`UNIVERSR_VIDEO`** and **`AUDIO`**.
 
 | Input | Type | Default | Description |
 |---|---|---|---|
-| `video_path` | string | `""` | Absolute path to a video. Takes priority over `video`. |
-| `video` *(opt.)* | choice | — | Pick a file from ComfyUI's `input/` folder (used when `video_path` is empty). |
+| `video` | upload / choice | — | Drop or upload a video, or pick one from ComfyUI's `input/` folder. |
 | `start_time` *(opt.)* | float | `0.0` | Trim start, seconds. |
 | `duration` *(opt.)* | float | `0.0` | Trim length, seconds (`0` = to end). |
 

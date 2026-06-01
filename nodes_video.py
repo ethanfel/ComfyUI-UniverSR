@@ -1,16 +1,18 @@
 """Video helper nodes for ComfyUI-UniverSR.
 
-Adapted from the HunyuanVideo-FoleyTune video loader/combiner, but trimmed to
-what audio super-resolution needs: pull the audio track out of a video, run it
-through the UniverSR sampler, then mux the enhanced track back onto the video.
+Modelled directly on the HunyuanVideo-FoleyTune video loader/combiner (same
+upload widget, drag-drop, and inline preview via web/js/UniverSRVideo.js), but
+the loader outputs the video's **audio** alongside a video reference instead of
+visual features — so you can super-resolve the audio and remux it back:
 
-    UniverSR Load Video Audio  -> AUDIO + UNIVERSR_VIDEO   (ffmpeg audio extract + preview)
+    UniverSR Load Video Audio  -> UNIVERSR_VIDEO + AUDIO   (ffmpeg audio extract + preview)
     UniverSR Video Combiner    -> STRING (output path)     (ffmpeg mux, no video re-encode)
 
 ffmpeg must be on PATH. Audio is read through a WAV pipe with soundfile, avoiding
 torchaudio's fragile torchcodec backend (same reasoning as the SR node).
 """
 
+import hashlib
 import io
 import os
 import re
@@ -37,7 +39,7 @@ def _ffmpeg() -> str:
     if not exe:
         raise RuntimeError(
             "ffmpeg was not found on PATH. Install it (e.g. `apt install ffmpeg`, "
-            "`brew install ffmpeg`, or a conda/static build) to use the UniverSR video nodes."
+            "`brew install ffmpeg`, or `conda install -c conda-forge ffmpeg`) to use the video nodes."
         )
     return exe
 
@@ -85,45 +87,59 @@ def _write_temp_wav(audio: dict) -> str:
     return tmp
 
 
+def _temp_preview_symlink(path: str) -> str:
+    """Link `path` into ComfyUI's temp/ dir for an inline preview; return the temp filename."""
+    temp_dir = folder_paths.get_temp_directory()
+    os.makedirs(temp_dir, exist_ok=True)
+    ext = os.path.splitext(path)[1] or ".mp4"
+    name = f"universr_preview_{hashlib.md5(path.encode()).hexdigest()[:8]}{ext}"
+    dst = os.path.join(temp_dir, name)
+    if os.path.islink(dst) or os.path.exists(dst):
+        try:
+            os.unlink(dst)
+        except OSError:
+            pass
+    try:
+        os.symlink(os.path.abspath(path), dst)
+    except OSError:
+        shutil.copy(path, dst)  # filesystems without symlink support
+    return name
+
+
+def _list_input_videos() -> list:
+    if not HAS_FOLDER_PATHS:
+        return []
+    try:
+        in_dir = folder_paths.get_input_directory()
+        return sorted(
+            f for f in os.listdir(in_dir)
+            if os.path.isfile(os.path.join(in_dir, f))
+            and f.rsplit(".", 1)[-1].lower() in VIDEO_EXTENSIONS
+        )
+    except Exception:
+        return []
+
+
 # --------------------------------------------------------------------------- #
-#  Load Video Audio
+#  Load Video Audio  (mirrors FoleyTuneVideoLoaderUpload; outputs video + audio)
 # --------------------------------------------------------------------------- #
 class UniverSRLoadVideoAudio:
-    """Extract a video's audio track and keep a reference to the source video.
+    """Upload/select a video, extract its audio track, and keep a reference to remux later.
 
-    Outputs AUDIO (feed it to UniverSR Super-Resolution) and UNIVERSR_VIDEO
-    (feed it, with the enhanced audio, to UniverSR Video Combiner).
+    Outputs the video reference (-> UniverSR Video Combiner) and the AUDIO
+    (-> UniverSR Super-Resolution). The video previews inline in the node.
     """
 
-    DESCRIPTION = "Extract audio from a video for super-resolution, keeping a handle to remux later."
+    DESCRIPTION = "Load a video: outputs its audio (to super-resolve) and a reference (to remux)."
     CATEGORY = "audio/UniverSR"
 
     @classmethod
     def INPUT_TYPES(cls):
-        files = []
-        if HAS_FOLDER_PATHS:
-            try:
-                in_dir = folder_paths.get_input_directory()
-                files = sorted(
-                    f for f in os.listdir(in_dir)
-                    if os.path.isfile(os.path.join(in_dir, f))
-                    and f.rsplit(".", 1)[-1].lower() in VIDEO_EXTENSIONS
-                )
-            except Exception:
-                files = []
         return {
             "required": {
-                "video_path": ("STRING", {
-                    "default": "",
-                    "placeholder": "/path/to/video.mp4  (or pick from 'video' below)",
-                    "tooltip": "Absolute path to a video file. Takes priority over the 'video' dropdown.",
-                }),
+                "video": (_list_input_videos(), {"video_upload": True}),
             },
             "optional": {
-                "video": (files or ["(none)"], {
-                    "video_upload": True,
-                    "tooltip": "Pick a video from the ComfyUI input/ folder (used when video_path is empty).",
-                }),
                 "start_time": ("FLOAT", {"default": 0.0, "min": 0.0, "max": 360000.0, "step": 0.1,
                                "tooltip": "Trim start in seconds."}),
                 "duration": ("FLOAT", {"default": 0.0, "min": 0.0, "max": 360000.0, "step": 0.1,
@@ -131,72 +147,49 @@ class UniverSRLoadVideoAudio:
             },
         }
 
-    RETURN_TYPES = ("AUDIO", "UNIVERSR_VIDEO")
-    RETURN_NAMES = ("audio", "video")
+    RETURN_TYPES = ("UNIVERSR_VIDEO", "AUDIO")
+    RETURN_NAMES = ("video", "audio")
     FUNCTION = "load"
     OUTPUT_NODE = True
 
-    def _resolve_path(self, video_path, video):
-        video_path = (video_path or "").strip()
-        if video_path:
-            if not os.path.isfile(video_path):
-                raise FileNotFoundError(f"Video not found: {video_path}")
-            return os.path.abspath(video_path)
-        if video and video != "(none)" and HAS_FOLDER_PATHS:
-            return os.path.abspath(folder_paths.get_annotated_filepath(video))
-        raise ValueError("No video given — set video_path or pick a file in 'video'.")
+    def load(self, video, start_time=0.0, duration=0.0):
+        video_path = folder_paths.get_annotated_filepath(video)
+        if not video_path or not os.path.isfile(video_path):
+            raise FileNotFoundError(f"Video not found: {video}")
 
-    def load(self, video_path, video="(none)", start_time=0.0, duration=0.0):
-        path = self._resolve_path(video_path, video)
-        waveform, sr = _extract_audio(path, start_time, duration)
+        waveform, sr = _extract_audio(video_path, start_time, duration)
         dur = waveform.shape[-1] / max(sr, 1)
-        print(f"[UniverSR] Loaded audio from {os.path.basename(path)}: "
+        print(f"[UniverSR] Loaded audio from {os.path.basename(video_path)}: "
               f"{waveform.shape[1]}ch @ {sr} Hz ({dur:.2f}s)")
 
         audio = {"waveform": waveform, "sample_rate": sr}
-        info = {"video_path": path, "start_time": float(start_time), "duration": float(duration),
-                "source_sr": sr, "source_channels": int(waveform.shape[1])}
+        info = {"video_path": os.path.abspath(video_path), "start_time": float(start_time),
+                "duration": float(duration), "source_sr": sr, "source_channels": int(waveform.shape[1])}
 
-        ui = self._preview(path)
-        return {"ui": ui, "result": (audio, info)}
-
-    def _preview(self, path):
-        """Symlink (or copy) the source video into temp/ for an inline preview."""
-        if not HAS_FOLDER_PATHS:
-            return {}
-        try:
-            import hashlib
-            temp_dir = folder_paths.get_temp_directory()
-            os.makedirs(temp_dir, exist_ok=True)
-            ext = os.path.splitext(path)[1] or ".mp4"
-            name = f"universr_preview_{hashlib.md5(path.encode()).hexdigest()[:8]}{ext}"
-            dst = os.path.join(temp_dir, name)
-            if os.path.islink(dst) or os.path.exists(dst):
-                os.unlink(dst)
-            try:
-                os.symlink(os.path.abspath(path), dst)
-            except OSError:
-                shutil.copy(path, dst)  # filesystems without symlink support
-            return {"gifs": [{"filename": name, "subfolder": "", "type": "temp",
-                              "format": f"video/{ext.lstrip('.')}"}]}
-        except Exception as e:
-            print(f"[UniverSR] Video preview skipped: {e}")
-            return {}
+        temp_name = _temp_preview_symlink(video_path)
+        ext = (os.path.splitext(video_path)[1] or ".mp4").lstrip(".")
+        return {"ui": {"gifs": [{"filename": temp_name, "subfolder": "", "type": "temp",
+                                 "format": f"video/{ext}"}]},
+                "result": (info, audio)}
 
     @classmethod
-    def IS_CHANGED(cls, video_path, video="(none)", start_time=0.0, duration=0.0):
+    def IS_CHANGED(cls, video, start_time=0.0, duration=0.0):
         try:
-            p = (video_path or "").strip()
-            if not p and video and video != "(none)" and HAS_FOLDER_PATHS:
-                p = folder_paths.get_annotated_filepath(video)
-            mtime = os.path.getmtime(p) if p and os.path.isfile(p) else 0
+            p = folder_paths.get_annotated_filepath(video)
+            m = os.path.getmtime(p) if os.path.isfile(p) else 0
         except Exception:
-            mtime = 0
-        return f"{video_path}:{video}:{start_time}:{duration}:{mtime}"
+            m = 0
+        return f"{video}:{start_time}:{duration}:{m}"
+
+    @classmethod
+    def VALIDATE_INPUTS(cls, video, **kwargs):
+        if not folder_paths.exists_annotated_filepath(video):
+            return f"Invalid video file: {video}"
+        return True
 
 
 # --------------------------------------------------------------------------- #
-#  Video Combiner
+#  Video Combiner  (mirrors FoleyTuneVideoCombiner)
 # --------------------------------------------------------------------------- #
 class UniverSRVideoCombiner:
     """Mux audio onto the source video (no video re-encode) and save the result."""

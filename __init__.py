@@ -17,4 +17,8 @@ try:
 except Exception as e:  # video nodes are optional (need ffmpeg/soundfile)
     print(f"[ComfyUI-UniverSR] Failed to load video nodes: {e}")
 
-__all__ = ["NODE_CLASS_MAPPINGS", "NODE_DISPLAY_NAME_MAPPINGS"]
+# Serves web/js/UniverSRVideo.js — the inline video preview + upload widget.
+# (./web + web/js/ + ../../../scripts imports mirrors the FoleyTune layout exactly.)
+WEB_DIRECTORY = "./web"
+
+__all__ = ["NODE_CLASS_MAPPINGS", "NODE_DISPLAY_NAME_MAPPINGS", "WEB_DIRECTORY"]
