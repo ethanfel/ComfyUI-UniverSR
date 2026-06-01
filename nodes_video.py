@@ -120,6 +120,27 @@ def _list_input_videos() -> list:
         return []
 
 
+def _load_video_audio(video_path: str, start_time: float, duration: float) -> dict:
+    """Shared loader body: extract audio + build the (video, audio) result and preview."""
+    if not video_path or not os.path.isfile(video_path):
+        raise FileNotFoundError(f"Video not found: {video_path}")
+
+    waveform, sr = _extract_audio(video_path, start_time, duration)
+    dur = waveform.shape[-1] / max(sr, 1)
+    print(f"[UniverSR] Loaded audio from {os.path.basename(video_path)}: "
+          f"{waveform.shape[1]}ch @ {sr} Hz ({dur:.2f}s)")
+
+    audio = {"waveform": waveform, "sample_rate": sr}
+    info = {"video_path": os.path.abspath(video_path), "start_time": float(start_time),
+            "duration": float(duration), "source_sr": sr, "source_channels": int(waveform.shape[1])}
+
+    temp_name = _temp_preview_symlink(video_path)
+    ext = (os.path.splitext(video_path)[1] or ".mp4").lstrip(".")
+    return {"ui": {"gifs": [{"filename": temp_name, "subfolder": "", "type": "temp",
+                             "format": f"video/{ext}"}]},
+            "result": (info, audio)}
+
+
 # --------------------------------------------------------------------------- #
 #  Load Video Audio  (mirrors FoleyTuneVideoLoaderUpload; outputs video + audio)
 # --------------------------------------------------------------------------- #
@@ -154,23 +175,7 @@ class UniverSRLoadVideoAudio:
 
     def load(self, video, start_time=0.0, duration=0.0):
         video_path = folder_paths.get_annotated_filepath(video)
-        if not video_path or not os.path.isfile(video_path):
-            raise FileNotFoundError(f"Video not found: {video}")
-
-        waveform, sr = _extract_audio(video_path, start_time, duration)
-        dur = waveform.shape[-1] / max(sr, 1)
-        print(f"[UniverSR] Loaded audio from {os.path.basename(video_path)}: "
-              f"{waveform.shape[1]}ch @ {sr} Hz ({dur:.2f}s)")
-
-        audio = {"waveform": waveform, "sample_rate": sr}
-        info = {"video_path": os.path.abspath(video_path), "start_time": float(start_time),
-                "duration": float(duration), "source_sr": sr, "source_channels": int(waveform.shape[1])}
-
-        temp_name = _temp_preview_symlink(video_path)
-        ext = (os.path.splitext(video_path)[1] or ".mp4").lstrip(".")
-        return {"ui": {"gifs": [{"filename": temp_name, "subfolder": "", "type": "temp",
-                                 "format": f"video/{ext}"}]},
-                "result": (info, audio)}
+        return _load_video_audio(video_path, start_time, duration)
 
     @classmethod
     def IS_CHANGED(cls, video, start_time=0.0, duration=0.0):
@@ -186,6 +191,45 @@ class UniverSRLoadVideoAudio:
         if not folder_paths.exists_annotated_filepath(video):
             return f"Invalid video file: {video}"
         return True
+
+
+# --------------------------------------------------------------------------- #
+#  Load Video Audio (Path)  (mirrors FoleyTuneVideoLoader; outputs video + audio)
+# --------------------------------------------------------------------------- #
+class UniverSRLoadVideoAudioPath:
+    """Same as UniverSR Load Video Audio, but takes an absolute file path instead of
+    an upload — handy for files outside ComfyUI's input/ folder. Previews after running."""
+
+    DESCRIPTION = "Load a video by file path: outputs its audio (to super-resolve) and a reference (to remux)."
+    CATEGORY = "audio/UniverSR"
+
+    @classmethod
+    def INPUT_TYPES(cls):
+        return {
+            "required": {
+                "video_path": ("STRING", {"default": "", "placeholder": "/path/to/video.mp4"}),
+            },
+            "optional": {
+                "start_time": ("FLOAT", {"default": 0.0, "min": 0.0, "max": 360000.0, "step": 0.1,
+                               "tooltip": "Trim start in seconds."}),
+                "duration": ("FLOAT", {"default": 0.0, "min": 0.0, "max": 360000.0, "step": 0.1,
+                             "tooltip": "Trim length in seconds (0 = to end)."}),
+            },
+        }
+
+    RETURN_TYPES = ("UNIVERSR_VIDEO", "AUDIO")
+    RETURN_NAMES = ("video", "audio")
+    FUNCTION = "load"
+    OUTPUT_NODE = True
+
+    def load(self, video_path, start_time=0.0, duration=0.0):
+        return _load_video_audio((video_path or "").strip(), start_time, duration)
+
+    @classmethod
+    def IS_CHANGED(cls, video_path, start_time=0.0, duration=0.0):
+        p = (video_path or "").strip()
+        m = os.path.getmtime(p) if p and os.path.isfile(p) else 0
+        return f"{video_path}:{start_time}:{duration}:{m}"
 
 
 # --------------------------------------------------------------------------- #
@@ -281,9 +325,11 @@ class UniverSRVideoCombiner:
 
 NODE_CLASS_MAPPINGS = {
     "UniverSRLoadVideoAudio": UniverSRLoadVideoAudio,
+    "UniverSRLoadVideoAudioPath": UniverSRLoadVideoAudioPath,
     "UniverSRVideoCombiner": UniverSRVideoCombiner,
 }
 NODE_DISPLAY_NAME_MAPPINGS = {
     "UniverSRLoadVideoAudio": "UniverSR Load Video Audio",
+    "UniverSRLoadVideoAudioPath": "UniverSR Load Video Audio (Path)",
     "UniverSRVideoCombiner": "UniverSR Video Combiner",
 }

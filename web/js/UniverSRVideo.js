@@ -150,6 +150,9 @@ app.registerExtension({
             addVideoPreview(nodeType);
             addUploadWidget(nodeType);
         }
+        if (nodeData?.name === "UniverSRLoadVideoAudioPath") {
+            addVideoPreview(nodeType);
+        }
         if (nodeData?.name === "UniverSRVideoCombiner") {
             addVideoPreview(nodeType);
         }

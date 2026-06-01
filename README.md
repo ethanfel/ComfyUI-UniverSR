@@ -162,6 +162,9 @@ button and drag-and-drop, just like a normal video loader. Outputs **`UNIVERSR_V
 | `start_time` *(opt.)* | float | `0.0` | Trim start, seconds. |
 | `duration` *(opt.)* | float | `0.0` | Trim length, seconds (`0` = to end). |
 
+There is also a **UniverSR Load Video Audio (Path)** variant that takes an absolute `video_path` string
+(for files outside ComfyUI's `input/` folder); it previews after you run it. Both feed the combiner.
+
 ### UniverSR Video Combiner
 
 Muxes an `AUDIO` track onto the source video **without re-encoding the video** (`-c:v copy`) and saves
