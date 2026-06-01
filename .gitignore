@@ -1,0 +1,10 @@
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.DS_Store
+# anchored to repo root so the vendored universr/models/ package is NOT ignored
+/models/
+/ckpts/
+*.wav
+*.flac

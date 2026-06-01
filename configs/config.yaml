@@ -1,0 +1,87 @@
+seed: 42
+
+wandb:
+  project_name: "UniverSR"
+  entity: null  # set to your wandb username or team
+  run_name: "audio"
+  notes: ""
+
+dataloader:
+  batch_size: 4
+  num_workers: 4
+  prefetch_factor: 2
+  persistent_workers: True
+  pin_memory: True
+
+collator:
+  sampling_rates_probs:
+    8: 0.7
+    12: 0.1
+    16: 0.1
+    24: 0.1
+  validation_probs:
+    8: 1.0
+
+dataset:
+  common:
+    num_samples: 32767
+    sr: 48000
+  train:
+    file_list: "./data/train.txt"
+  val:
+    file_list: "./data/val.txt"
+
+path:
+  class_path: universr.flow.path.OriginalCFMPath
+  init_args:
+    sigma_min: 1.0e-4
+
+transform:
+  window_fn: 'hann'
+  n_fft: 1024
+  sampling_rate: 48000
+  hop_length: 512
+  alpha: 0.2
+  beta: 1
+  comp_eps: 1.0e-4
+
+model:
+  in_channels: 2
+  out_channels: 2
+  dims: [96, 192, 384, 768]
+  depths: [2, 2, 4, 2]
+  drop_path: 0
+  time_dim: 256
+  cond_dim: 384
+  total_freq_bins: 512
+  hr_freq_bins: 432
+  feature_enc_layers: 4
+  cond_dropout_prob: 0.1
+  sr_to_lr_bins: {8: 80, 12: 128, 16: 170, 24: 256}
+
+scheduler:
+  type: CosineLR
+  init_args:
+    num_warmup_steps: 10000
+    num_training_steps: 5000000
+
+optimizer:
+  lr: 2.0e-4
+  betas: [0.9, 0.99]
+
+train:
+  num_epochs: 200
+  max_steps: 5000000
+  ckpt_save_dir: ./ckpts/audio/
+  ckpt_load_path: null
+  log_step_interval: 1000
+  val_step_interval: 50000
+  num_val_log_samples: 5
+  val_ode_steps: 4
+  val_max_sec: 5
+
+eval:
+  ode_steps: 4
+  guidance_scale: 1.5
+  max_batches: null
+  num_log_samples: 6

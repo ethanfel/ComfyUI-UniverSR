@@ -1,0 +1,19 @@
+[project]
+name = "comfyui-universr"
+description = "ComfyUI nodes for UniverSR — vocoder-free audio super-resolution (8/12/16/24 kHz → 48 kHz) via flow matching."
+version = "1.0.0"
+license = {file = "LICENSE"}
+dependencies = [
+    "torchdiffeq>=0.2.3",
+    "einops>=0.7",
+    "timm>=0.9",
+    "huggingface_hub>=0.20",
+    "pyyaml>=6.0",
+]
+
+[project.urls]
+Repository = "https://github.com/woongzip1/UniverSR"
+Paper = "https://arxiv.org/abs/2510.00771"
+
+[tool.comfy]
+DisplayName = "UniverSR"

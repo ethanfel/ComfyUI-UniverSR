@@ -1,0 +1,8 @@
+# ComfyUI-UniverSR runtime deps.
+# torch / torchaudio / numpy / matplotlib are already shipped by ComfyUI.
+# The vendored `universr` package only needs these extras on top of ComfyUI's stack:
+torchdiffeq>=0.2.3
+einops>=0.7
+timm>=0.9
+huggingface_hub>=0.20
+pyyaml>=6.0
