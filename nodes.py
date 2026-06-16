@@ -55,6 +55,17 @@ class UniverSRModelLoader:
                 }),
             },
             "optional": {
+                "tf32": ("BOOLEAN", {
+                    "default": True,
+                    "tooltip": "Enable TF32 matmul on Ampere+ GPUs (~1.15x). Perceptually lossless "
+                               "but not bit-exact; global setting. Turn off for reference fp32.",
+                }),
+                "compile": ("BOOLEAN", {
+                    "default": False,
+                    "tooltip": "torch.compile the network (~2x). First run compiles (~10-35s), then fast "
+                               "and cached. Needs CUDA. Chunks are auto-padded to a fixed size, so set the "
+                               "sampler's chunk_seconds near your typical clip length to avoid wasted compute.",
+                }),
                 "local_path": ("STRING", {
                     "default": "",
                     "tooltip": "Override: a folder with config.yaml + pytorch_model.bin, "
@@ -72,17 +83,20 @@ class UniverSRModelLoader:
     RETURN_NAMES = ("model",)
     FUNCTION = "load"
 
-    def load(self, model, device, local_path="", config_path=""):
+    def load(self, model, device, tf32=True, compile=False, local_path="", config_path=""):
         dev = _default_device() if device == "auto" else device
         if dev == "cuda" and not torch.cuda.is_available():
             print("[UniverSR] CUDA unavailable, falling back to CPU")
             dev = "cpu"
-        model_obj, cache_key = usr.load_model(model, dev, local_path=local_path, config_path=config_path)
+        model_obj, cache_key = usr.load_model(
+            model, dev, local_path=local_path, config_path=config_path,
+            tf32=tf32, compile_model=compile,
+        )
         return ({"model": model_obj, "device": dev, "cache_key": cache_key},)
 
     @classmethod
-    def IS_CHANGED(cls, model, device, local_path="", config_path=""):
-        return f"{model}:{device}:{local_path}:{config_path}"
+    def IS_CHANGED(cls, model, device, tf32=True, compile=False, local_path="", config_path=""):
+        return f"{model}:{device}:tf32={tf32}:compile={compile}:{local_path}:{config_path}"
 
 
 # --------------------------------------------------------------------------- #

@@ -30,6 +30,7 @@ muffled or band‑limited audio gets believable "air" and detail back.
   - [UniverSR Load Video Audio](#universr-load-video-audio)
   - [UniverSR Video Combiner](#universr-video-combiner)
 - [Choosing `input_sr`](#choosing-input_sr-the-one-setting-that-matters-most)
+- [Performance (speed)](#performance-speed)
 - [Recommended settings](#recommended-settings)
 - [Long audio & chunking](#long-audio--chunking)
 - [Example workflow](#example-workflow)
@@ -125,6 +126,8 @@ Loads (and caches) a checkpoint. Output: **`UNIVERSR_MODEL`**.
 |---|---|---|---|
 | `model` | choice | `universr-audio` | Preset to download, or a local checkpoint folder found under `models/universr/`. |
 | `device` | `auto` / `cuda` / `cpu` | `auto` | Where to load the weights. `auto` picks CUDA when available. |
+| `tf32` *(opt.)* | bool | `True` | TF32 matmul on Ampere+ (~1.15×). Perceptually lossless, not bit-exact. |
+| `compile` *(opt.)* | bool | `False` | `torch.compile` the network (~2×). See [Performance](#performance-speed). |
 | `local_path` *(opt.)* | string | `""` | Override: a folder with `config.yaml` + `pytorch_model.bin`, **or** a raw training checkpoint (`.pth` / `.ckpt`). |
 | `config_path` *(opt.)* | string | `""` | `config.yaml` to pair with a raw checkpoint. Empty → the bundled default config. |
 
@@ -222,6 +225,30 @@ Two ways to use it:
 > so you don't need to pre-process or resample your audio — just pick the bandwidth.
 
 ---
+
+## Performance (speed)
+
+Two **equal-quality** speedups live on the Model Loader (both leave the output perceptually identical —
+measured deviation is at the fp32 rounding floor, ≈ −64 dB):
+
+| Setting | Speedup (measured) | Notes |
+|---|---|---|
+| `tf32` (default **on**) | ~1.15× | TF32 matmul on Ampere+. One global flag, no caveats worth worrying about. |
+| `compile` (opt-in) | ~2.1× | `torch.compile` the network. **Stacks with TF32 → ~2.5× total.** |
+
+On the reference machine, a 12 s clip went **4.3 s → 1.7 s (2.48×)** with both enabled, with a max
+sample deviation of `2e-4` vs plain fp32.
+
+**About `compile`:** the first run pays a one-time compile (~10–35 s); after that the compiled model is
+cached for the whole ComfyUI session. The model can only be compiled for a **fixed input shape**, so the
+node automatically **pads every chunk to `chunk_seconds`** — meaning clips of *any* length reuse the same
+compiled graph (no per-length recompiles). Set the sampler's `chunk_seconds` near your typical clip length
+so short clips aren't padded up wastefully. Requires CUDA; falls back to eager if compilation fails.
+
+> These are the only speedups that don't change the output. Things that *don't* help here: CFG-batching,
+> channel/chunk batching, and `channels_last` — the GPU is already compute-bound at batch 1, so they
+> gave ~0 gain in testing. Going faster than this requires bf16/fp16, which is **not** equal-quality
+> (verify by ear first).
 
 ## Recommended settings
 

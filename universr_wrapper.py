@@ -158,10 +158,21 @@ def resolve_model_ref(model: str, local_path: str = "") -> tuple:
     )
 
 
-def load_model(model: str, device: str, local_path: str = "", config_path: str = ""):
+def apply_tf32(enabled: bool):
+    """Enable/disable TF32 matmul on Ampere+ GPUs. ~1.15x speedup, perceptually
+    lossless but NOT bit-exact (10 mantissa bits vs 23). Global process setting."""
+    try:
+        torch.set_float32_matmul_precision("high" if enabled else "highest")
+    except Exception:
+        pass
+
+
+def load_model(model: str, device: str, local_path: str = "", config_path: str = "",
+               tf32: bool = True, compile_model: bool = False):
     """Load (and cache) a UniverSR model. Returns (model_obj, cache_key)."""
+    apply_tf32(tf32)  # global; apply before the cache short-circuit so toggling takes effect
     kind, path = resolve_model_ref(model, local_path)
-    cache_key = f"{kind}:{os.path.abspath(path)}:{device}"
+    cache_key = f"{kind}:{os.path.abspath(path)}:{device}:compile={bool(compile_model)}"
 
     with _CACHE_LOCK:
         if cache_key in _MODEL_CACHE:
@@ -182,8 +193,24 @@ def load_model(model: str, device: str, local_path: str = "", config_path: str =
             model_obj = UniverSR.from_local(ckpt_path=path, config_path=cfg, device=device)
 
         model_obj.eval()
+
+        # torch.compile the UNet (~2.1x measured). Static shapes only — the model's
+        # adaptive-avg-pool can't trace dynamic shapes — so the sampler pads every
+        # chunk to a fixed length (see _universr_compiled flag) to compile exactly once.
+        compiled = False
+        if compile_model and device == "cuda":
+            try:
+                import torch._dynamo as _dynamo
+                _dynamo.config.cache_size_limit = max(getattr(_dynamo.config, "cache_size_limit", 8), 32)
+                model_obj.model = torch.compile(model_obj.model, mode="default", dynamic=False)
+                compiled = True
+                print("[UniverSR] torch.compile enabled (first run compiles ~10-35s, then ~2x).")
+            except Exception as e:
+                print(f"[UniverSR] torch.compile unavailable, continuing eager: {e}")
+        model_obj._universr_compiled = compiled
+
         n = sum(p.numel() for p in model_obj.parameters()) / 1e6
-        print(f"[UniverSR] Ready - {n:.1f}M params on {device}")
+        print(f"[UniverSR] Ready - {n:.1f}M params on {device} (tf32={tf32}, compile={compiled})")
         _MODEL_CACHE[cache_key] = model_obj
         return model_obj, cache_key
 
@@ -282,12 +309,21 @@ def _chunk_starts(total: int, chunk: int, hop: int) -> list:
 
 @torch.no_grad()
 def _enhance_channel(model, ch48: torch.Tensor, input_sr, ode_method, ode_steps,
-                     guidance_scale, chunk: int, ov: int, pbar) -> torch.Tensor:
+                     guidance_scale, chunk: int, ov: int, pbar, pad_to: int = 0) -> torch.Tensor:
     T = ch48.shape[-1]
+
+    def seg_enhance(seg: torch.Tensor) -> torch.Tensor:
+        # pad_to>0 (compiled model) → zero-pad to a fixed length so the UNet always
+        # sees one input shape (compile once), then crop the result back.
+        L = seg.shape[-1]
+        if pad_to and pad_to > L:
+            seg = _fit(seg, pad_to)
+        return _fit(_enhance_segment(model, seg, input_sr, ode_method, ode_steps, guidance_scale), L)
+
     if chunk <= 0 or T <= chunk:
         if pbar is not None:
             pbar.update(1)
-        return _fit(_enhance_segment(model, ch48, input_sr, ode_method, ode_steps, guidance_scale), T)
+        return _fit(seg_enhance(ch48), T)
 
     hop = max(1, chunk - ov)
     starts = _chunk_starts(T, chunk, hop)
@@ -297,7 +333,7 @@ def _enhance_channel(model, ch48: torch.Tensor, input_sr, ode_method, ode_steps,
         if HAS_COMFY:
             mm.throw_exception_if_processing_interrupted()
         e = min(s + chunk, T)
-        enh = _fit(_enhance_segment(model, ch48[s:e], input_sr, ode_method, ode_steps, guidance_scale), e - s)
+        enh = seg_enhance(ch48[s:e])
         w = _crossfade_window(e - s, ov, first=(i == 0), last=(e >= T))
         out[s:e] += enh * w
         wsum[s:e] += w
@@ -331,6 +367,15 @@ def super_resolve(model, waveform: torch.Tensor, sr: int, input_sr: int,
         print(f"[UniverSR] chunk_seconds too small; raising to the model floor "
               f"({MODEL_MIN_SAMPLES / TARGET_SR:.2f}s).")
         chunk = MODEL_MIN_SAMPLES
+
+    # A torch.compile'd model needs a fixed input shape, so force chunking and pad
+    # every chunk to `chunk` samples (compile once, reuse). Without compile, pad_to=0.
+    compiled = getattr(model, "_universr_compiled", False)
+    if compiled and chunk <= 0:
+        chunk = int(round(10.0 * TARGET_SR))
+        print("[UniverSR] compile: forcing 10.0s chunks for fixed input shapes.")
+    pad_to = chunk if compiled else 0
+
     ov = max(0, min(int(round(overlap_seconds * TARGET_SR)), chunk - 1)) if chunk > 0 else 0
     n_per_ch = len(_chunk_starts(T48, chunk, max(1, chunk - ov))) if chunk > 0 else 1
 
@@ -351,7 +396,7 @@ def super_resolve(model, waveform: torch.Tensor, sr: int, input_sr: int,
             for c in range(C):
                 wet[b, c] = _fit(
                     _enhance_channel(model, dry48[b, c], input_sr, ode_method, ode_steps,
-                                     guidance_scale, chunk, ov, pbar),
+                                     guidance_scale, chunk, ov, pbar, pad_to=pad_to),
                     T48,
                 )
     finally:
