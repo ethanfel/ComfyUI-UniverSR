@@ -159,16 +159,21 @@ def resolve_model_ref(model: str, local_path: str = "") -> tuple:
 
 
 def apply_tf32(enabled: bool):
-    """Enable/disable TF32 matmul on Ampere+ GPUs. ~1.15x speedup, perceptually
-    lossless but NOT bit-exact (10 mantissa bits vs 23). Global process setting."""
+    """Enable/disable TF32 for BOTH matmul and cuDNN convolutions on Ampere+ GPUs.
+
+    ~1.15x when on. In our spectral A/B (centroid + HF energy) TF32 was tonally
+    neutral, but it is NOT bit-exact (10 mantissa bits vs 23), so it's off by
+    default. Off sets true fp32 — note PyTorch otherwise leaves cuDNN conv-TF32 ON
+    by default, so we explicitly disable it here too. Global process setting."""
     try:
-        torch.set_float32_matmul_precision("high" if enabled else "highest")
+        torch.set_float32_matmul_precision("high" if enabled else "highest")  # matmul TF32
+        torch.backends.cudnn.allow_tf32 = enabled                              # conv TF32
     except Exception:
         pass
 
 
 def load_model(model: str, device: str, local_path: str = "", config_path: str = "",
-               tf32: bool = True, compile_model: bool = False):
+               tf32: bool = False, compile_model: bool = False):
     """Load (and cache) a UniverSR model. Returns (model_obj, cache_key)."""
     apply_tf32(tf32)  # global; apply before the cache short-circuit so toggling takes effect
     kind, path = resolve_model_ref(model, local_path)

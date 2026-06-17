@@ -126,7 +126,7 @@ Loads (and caches) a checkpoint. Output: **`UNIVERSR_MODEL`**.
 |---|---|---|---|
 | `model` | choice | `universr-audio` | Preset to download, or a local checkpoint folder found under `models/universr/`. |
 | `device` | `auto` / `cuda` / `cpu` | `auto` | Where to load the weights. `auto` picks CUDA when available. |
-| `tf32` *(opt.)* | bool | `True` | TF32 matmul on Ampere+ (~1.15×). Perceptually lossless, not bit-exact. |
+| `tf32` *(opt.)* | bool | `False` | TF32 matmul + conv on Ampere+ (~1.15×). Tonally neutral in testing but not bit-exact; off = reference fp32. |
 | `compile` *(opt.)* | bool | `False` | `torch.compile` the network (~2×). See [Performance](#performance-speed). |
 | `local_path` *(opt.)* | string | `""` | Override: a folder with `config.yaml` + `pytorch_model.bin`, **or** a raw training checkpoint (`.pth` / `.ckpt`). |
 | `config_path` *(opt.)* | string | `""` | `config.yaml` to pair with a raw checkpoint. Empty → the bundled default config. |
@@ -228,16 +228,21 @@ Two ways to use it:
 
 ## Performance (speed)
 
-Two **equal-quality** speedups live on the Model Loader (both leave the output perceptually identical —
-measured deviation is at the fp32 rounding floor, ≈ −64 dB):
+Speedups live on the Model Loader. **`compile` is the real, tonally-neutral win** (op fusion); `tf32` is
+a small extra that is off by default.
 
 | Setting | Speedup (measured) | Notes |
 |---|---|---|
-| `tf32` (default **on**) | ~1.15× | TF32 matmul on Ampere+. One global flag, no caveats worth worrying about. |
-| `compile` (opt-in) | ~2.1× | `torch.compile` the network. **Stacks with TF32 → ~2.5× total.** |
+| `compile` (opt-in) | ~2.1× | `torch.compile` the network — op fusion, no tonal change. The recommended speedup. |
+| `tf32` (default **off**) | ~1.15× | TF32 matmul + conv on Ampere+. **Stacks with compile → ~2.5×.** Tonally neutral in our spectral A/B but not bit-exact — left off so the default is reference fp32. |
 
-On the reference machine, a 12 s clip went **4.3 s → 1.7 s (2.48×)** with both enabled, with a max
-sample deviation of `2e-4` vs plain fp32.
+On the reference machine, a 12 s clip went **4.3 s → 1.7 s (2.48×)** with both enabled.
+
+**About `tf32`:** in a fixed-seed A/B, TF32 left the spectral centroid and >8 kHz energy unchanged to 3
+significant figures (i.e. it does **not** darken the output). If you toggle it and the result sounds
+different, check your `seed` — with `seed=0` every run draws new noise, so two runs differ regardless of
+TF32. To compare fairly, set a fixed `seed` and change only the toggle. Enabling `tf32` also turns on
+cuDNN conv-TF32; disabling it restores true fp32 (PyTorch leaves conv-TF32 on by default otherwise).
 
 **About `compile`:** the first run pays a one-time compile (~10–35 s); after that the compiled model is
 cached for the whole ComfyUI session. The model can only be compiled for a **fixed input shape**, so the
@@ -245,10 +250,9 @@ node automatically **pads every chunk to `chunk_seconds`** — meaning clips of 
 compiled graph (no per-length recompiles). Set the sampler's `chunk_seconds` near your typical clip length
 so short clips aren't padded up wastefully. Requires CUDA; falls back to eager if compilation fails.
 
-> These are the only speedups that don't change the output. Things that *don't* help here: CFG-batching,
-> channel/chunk batching, and `channels_last` — the GPU is already compute-bound at batch 1, so they
-> gave ~0 gain in testing. Going faster than this requires bf16/fp16, which is **not** equal-quality
-> (verify by ear first).
+> Things that *don't* help here: CFG-batching, channel/chunk batching, and `channels_last` — the GPU is
+> already compute-bound at batch 1, so they gave ~0 gain in testing. Going faster than `compile` requires
+> bf16/fp16, which is **not** equal-quality (verify by ear first).
 
 ## Recommended settings
 

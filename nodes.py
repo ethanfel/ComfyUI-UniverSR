@@ -56,9 +56,10 @@ class UniverSRModelLoader:
             },
             "optional": {
                 "tf32": ("BOOLEAN", {
-                    "default": True,
-                    "tooltip": "Enable TF32 matmul on Ampere+ GPUs (~1.15x). Perceptually lossless "
-                               "but not bit-exact; global setting. Turn off for reference fp32.",
+                    "default": False,
+                    "tooltip": "TF32 matmul + conv on Ampere+ GPUs (~1.15x). Tonally neutral in testing "
+                               "but not bit-exact; off by default = reference fp32. A/B with a FIXED seed "
+                               "(seed!=0) — comparing two seed=0 runs changes the noise, not just TF32.",
                 }),
                 "compile": ("BOOLEAN", {
                     "default": False,
@@ -83,7 +84,7 @@ class UniverSRModelLoader:
     RETURN_NAMES = ("model",)
     FUNCTION = "load"
 
-    def load(self, model, device, tf32=True, compile=False, local_path="", config_path=""):
+    def load(self, model, device, tf32=False, compile=False, local_path="", config_path=""):
         dev = _default_device() if device == "auto" else device
         if dev == "cuda" and not torch.cuda.is_available():
             print("[UniverSR] CUDA unavailable, falling back to CPU")
