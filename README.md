@@ -142,7 +142,7 @@ Runs the super-resolution. Outputs: **`AUDIO`** (48 kHz) and **`IMAGE`** (spectr
 |---|---|---|---|---|
 | `audio` | AUDIO | — | — | Input audio (any sample rate / mono or stereo). |
 | `model` | UNIVERSR_MODEL | — | — | From the Model Loader. |
-| `input_sr` | choice | `8000` | 8000 / 12000 / 16000 / 24000 | **Effective input bandwidth (Hz).** Content is treated as valid up to `input_sr/2` and **regenerated above it**. See below. |
+| `input_sr` | choice | `auto` | auto / 8000 / 12000 / 16000 / 24000 | **Effective input bandwidth (Hz).** Content is valid up to `input_sr/2` and **regenerated above it**. `auto` detects the cutoff for you (see below). |
 | `ode_method` | choice | `midpoint` | euler / midpoint / rk4 | ODE solver. `euler` fastest → `midpoint` balanced → `rk4` best. |
 | `ode_steps` | int | `4` | 1–64 | Flow-matching integration steps. `4` is fast & validated; `4–10` is a good range. |
 | `guidance_scale` | float | `1.5` | 0–6 | Classifier-free guidance. Higher = denser highs but less faithful. `0` disables CFG. |
@@ -209,6 +209,13 @@ audio **and** the `video` reference into the combiner. Ready-made graph:
 | `12000` | 6 kHz  | 6 – 24 kHz |
 | `16000` | 8 kHz  | 8 – 24 kHz |
 | `24000` | 12 kHz | 12 – 24 kHz |
+
+**`auto` (default)** analyses the input's spectrum, finds the **cutoff cliff**, and picks the largest
+supported bandwidth at or below it (rounding *down*, to avoid feeding the model an empty band). It
+prints its decision, e.g. `auto: cutoff 8.0 kHz (drop 53 dB) -> input_sr=16000`. When there's **no clear
+cutoff** (full-band or gently rolled-off audio) it falls back to `24000` (least aggressive). Auto is
+most reliable on genuinely band-limited material (codecs, downsamples, telephone); for fine control or
+deliberate over-brightening, pick a value manually.
 
 Two ways to use it:
 

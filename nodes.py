@@ -118,11 +118,12 @@ class UniverSRSampler:
             "required": {
                 "audio": ("AUDIO", {}),
                 "model": ("UNIVERSR_MODEL", {}),
-                "input_sr": (["8000", "12000", "16000", "24000"], {
-                    "default": "8000",
+                "input_sr": (["auto", "8000", "12000", "16000", "24000"], {
+                    "default": "auto",
                     "tooltip": "Effective input bandwidth (Hz). Content is treated as valid up to "
-                               "input_sr/2 and regenerated above it. 8000 = genuine low-rate audio "
-                               "(strongest, 8 kHz->48 kHz). 16000 = brighten muffled audio above 8 kHz.",
+                               "input_sr/2 and regenerated above it. 'auto' detects the audio's cutoff "
+                               "and picks for you (falls back to 24000 if no clear cutoff). "
+                               "8000 = genuine low-rate audio (strongest). 16000 = brighten muffled audio.",
                 }),
             },
             "optional": {
@@ -179,11 +180,19 @@ class UniverSRSampler:
         model_obj = model["model"]
         waveform, sr = usr.comfy_audio_to_tensor(audio)
         dur = waveform.shape[-1] / max(sr, 1)
+
+        # Resolve auto bandwidth detection to a concrete input_sr.
+        if str(input_sr) == "auto":
+            isr, info = usr.detect_input_sr(waveform, sr)
+            print(f"[UniverSR] auto: {info['reason']} -> input_sr={isr}")
+        else:
+            isr = int(input_sr)
+
         print(f"[UniverSR] {tuple(waveform.shape)} @ {sr} Hz ({dur:.2f}s) -> 48 kHz | "
-              f"input_sr={input_sr}, {ode_method}/{ode_steps}, cfg={guidance_scale}, blend={blend}")
+              f"input_sr={isr}, {ode_method}/{ode_steps}, cfg={guidance_scale}, blend={blend}")
 
         out, dry48 = usr.super_resolve(
-            model_obj, waveform, sr, int(input_sr),
+            model_obj, waveform, sr, isr,
             ode_method=ode_method, ode_steps=int(ode_steps), guidance_scale=guidance_scale,
             seed=int(seed), chunk_seconds=float(chunk_seconds),
             overlap_seconds=float(overlap_seconds), blend=float(blend),
@@ -195,7 +204,7 @@ class UniverSRSampler:
         if show_spectrogram:
             in_mono = dry48[0].mean(0).numpy()
             out_mono = out[0].mean(0).numpy()
-            spec = usr.make_spectrogram_image(in_mono, out_mono, int(input_sr))
+            spec = usr.make_spectrogram_image(in_mono, out_mono, isr)
 
         if unload_model:
             usr.evict_model(model["cache_key"])
