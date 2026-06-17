@@ -50,7 +50,7 @@
         {"name": "spectrogram", "type": "IMAGE", "links": [], "slot_index": 1}
       ],
       "properties": {"Node name for S&R": "UniverSRSampler"},
-      "widgets_values": [16000, "midpoint", 4, 2.0, 0, "randomize", 10.0, 0.5, 1.0, false, true]
+      "widgets_values": ["16000", "midpoint", 4, 2.0, 0, "randomize", 10.0, 0.5, 1.0, false, true]
     },
     {
       "id": 4,

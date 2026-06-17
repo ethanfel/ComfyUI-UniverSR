@@ -118,8 +118,8 @@ class UniverSRSampler:
             "required": {
                 "audio": ("AUDIO", {}),
                 "model": ("UNIVERSR_MODEL", {}),
-                "input_sr": ([8000, 12000, 16000, 24000], {
-                    "default": 8000,
+                "input_sr": (["8000", "12000", "16000", "24000"], {
+                    "default": "8000",
                     "tooltip": "Effective input bandwidth (Hz). Content is treated as valid up to "
                                "input_sr/2 and regenerated above it. 8000 = genuine low-rate audio "
                                "(strongest, 8 kHz->48 kHz). 16000 = brighten muffled audio above 8 kHz.",
